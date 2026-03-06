@@ -15,6 +15,7 @@ class MioAgente(AgentInterface):
     # Son los materiales más necesarios en construcciones, luego se piden con year of plenty para tener en mano
     year_of_plenty_material_one = MaterialConstants.CEREAL
     year_of_plenty_material_two = MaterialConstants.MINERAL
+    sum_probability_weight = 1.0
 
     def __init__(self, agent_id, params=None):
         super().__init__(agent_id)
