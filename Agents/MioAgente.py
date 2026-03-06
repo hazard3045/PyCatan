@@ -20,14 +20,14 @@ class MioAgente(AgentInterface):
     distance_weight = 1.0
     harbor_weight = 1.0
     street_weight = 1.0
-    colony_weight = 1.0
+    town_weight = 1.0
     city_weight = 1.0
-    lumber_a=1.0
+    wood_a=1.0
     brick_a=1.0
     wool_a=1.0
     grain_a=1.0
     ore_a=1.0
-    lumber_b=1.0
+    wood_b=1.0   #legname
     brick_b=1.0
     wool_b=1.0
     grain_b=1.0
@@ -108,7 +108,7 @@ class MioAgente(AgentInterface):
         
         # Genetic parameters to balance the different road strategies
         w_future_node = self.params.get('road_strategy_future_node', 1.0)
-        w_harbor = self.params.get('road_strategy_harbor_hunt', 1.5)
+        w_harbor = self.params.get('weight_harbor', 1.5)
         w_center = self.params.get('road_strategy_center_control', 0.5)
         
         best_road_destination = -1
@@ -157,6 +157,28 @@ class MioAgente(AgentInterface):
             best_road_destination = random.choice(possible_adjacent_nodes)
             
         return best_road_destination
+
+    def pick_best_expansion_road(self, valid_roads):
+        best_road = valid_roads[0]
+        highest_potential = -float('inf')
+        
+        for road in valid_roads:
+            # We look at the 'finishing_node' (where the road ends)
+            target_node = road['finishing_node']
+            
+            # The score is a mix of the node itself and its neighbors (future potential)
+            potential_score = self.evaluate_node(target_node)
+            
+            # Look at adjacent nodes of the finishing node to see if they are good spots
+            for future_node in self.board.nodes[target_node]['adjacent']:
+                if self.board.nodes[future_node]['player'] == -1:
+                    potential_score += (self.evaluate_node(future_node) * 0.5)
+            
+            if potential_score > highest_potential:
+                highest_potential = potential_score
+                best_road = road
+                
+        return best_road
 
     def on_trade_offer(self, board_instance, offer=TradeOffer(), player_id=int):
         answer = random.randint(0, 2)
@@ -234,37 +256,60 @@ class MioAgente(AgentInterface):
 
     def on_build_phase(self, board_instance):
         self.board = board_instance
+        
+        w_city = self.params.get('city_weight', 0.5)
+        w_town = self.params.get('town_weight', 0.5)
 
-        if len(self.development_cards_hand.hand) and random.randint(0, 1):
-            return self.development_cards_hand.select_card(0)
+        # 1. Always check if we have development cards to play first
+        #if len(self.development_cards_hand.hand) and random.randint(0, 1):
+        #    return self.development_cards_hand.select_card(0)
 
-        answer = random.randint(0, 2)
-        # Pueblo / carretera
-        if self.hand.resources.has_more(BuildConstants.TOWN) and answer == 0:
-            answer = random.randint(0, 1)
-            # Elegimos aleatoriamente si hacer un pueblo o una carretera
-            if answer:
-                valid_nodes = self.board.valid_town_nodes(self.id)
-                if len(valid_nodes):
-                    town_node = random.randint(0, len(valid_nodes) - 1)
-                    return {'building': BuildConstants.TOWN, 'node_id': valid_nodes[town_node]}
-            else:
-                valid_nodes = self.board.valid_road_nodes(self.id)
-                if len(valid_nodes):
-                    road_node = random.randint(0, len(valid_nodes) - 1)
-                    return {'building': BuildConstants.ROAD,
-                            'node_id': valid_nodes[road_node]['starting_node'],
-                            'road_to': valid_nodes[road_node]['finishing_node']}
+        # --- STRATEGY: Hierarchy of Needs ---
+        
+        # 2. Priority: CITIES (Maximum ROI)
+        # If we have resources for a city, build it on our most productive node
+        if self.hand.resources.has_more(BuildConstants.CITY):
+            valid_city_nodes = self.board.valid_city_nodes(self.id)
+            if valid_city_nodes:
+                # Find the node that gives us the highest score based on our DNA
+                best_city_node = max(valid_city_nodes, key=lambda node_id: self.evaluate_node(node_id))
+                return {'building': BuildConstants.CITY, 'node_id': best_city_node}
+        
+        # The agent is closed to city if he has 2 mineral and has all the cereal
+        is_close_to_city = (self.hand.resources.mineral >= 2 and self.hand.resources.cereal >= 2)
+        saving_for_city = is_close_to_city and (random.random() < w_city)
+        #if he doesn't need to save for city, he can build a settlement if he has the resources
+        # 3. Priority: SETTLEMENTS (TOWNS)
+        # Expansion is key to increase resource diversity
+        if not saving_for_city:
+            if self.hand.resources.has_more(BuildConstants.TOWN):
+                valid_town_nodes = self.board.valid_town_nodes(self.id)
+                if valid_town_nodes:
+                    best_town_node = max(valid_town_nodes, key=lambda node_id: self.evaluate_node(node_id))
+                    return {'building': BuildConstants.TOWN, 'node_id': best_town_node}
 
-        # Ciudad
-        elif self.hand.resources.has_more(BuildConstants.CITY) and answer == 1:
-            valid_nodes = self.board.valid_city_nodes(self.id)
-            if len(valid_nodes):
-                city_node = random.randint(0, len(valid_nodes) - 1)
-                return {'building': BuildConstants.CITY, 'node_id': valid_nodes[city_node]}
+        # 4. Priority: ROADS (Strategic Expansion)
+        # Build roads only if we have the resources and a place to go
+        # 3. PRIORITY: ROAD
+        # Check if we should save for a TOWN (Wood >= 1 or Clay >= 1)
+        is_close_to_town = (self.hand.resources.wood >= 1 and self.hand.resources.clay >= 1 and self.hand.resources.cereal >= 1)
+        saving_for_town = is_close_to_town and (random.random() < w_town)
 
-        # Carta de desarrollo
-        elif self.hand.resources.has_more(BuildConstants.CARD) and answer == 2:
+        if not saving_for_town and not saving_for_city:
+            if self.hand.resources.has_more(BuildConstants.ROAD):
+                valid_roads = self.board.valid_road_nodes(self.id)
+                if valid_roads:
+                    # Use a specific logic to choose the road that leads to the best future node
+                    best_road = self.pick_best_expansion_road(valid_roads)
+                    return {
+                        'building': BuildConstants.ROAD,
+                        'node_id': best_road['starting_node'],
+                        'road_to': best_road['finishing_node']
+                    }
+
+        # 5. Last Resort: DEVELOPMENT CARDS
+        # If we have leftovers and can't build on the board, buy a card
+        if self.hand.resources.has_more(BuildConstants.CARD):
             return {'building': BuildConstants.CARD}
 
         return None
