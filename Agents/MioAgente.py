@@ -15,31 +15,6 @@ class MioAgente(AgentInterface):
     # Son los materiales más necesarios en construcciones, luego se piden con year of plenty para tener en mano
     year_of_plenty_material_one = MaterialConstants.CEREAL
     year_of_plenty_material_two = MaterialConstants.MINERAL
-    sum_probability_weight = 1.0
-    new_resources_weight = 1.0
-    distance_weight = 1.0
-    harbor_weight = 1.0
-    street_weight = 1.0
-    town_weight = 1.0
-    city_weight = 1.0
-    wood_a=1.0
-    brick_a=1.0
-    wool_a=1.0
-    grain_a=1.0
-    ore_a=1.0
-    wood_b=1.0   #legname
-    brick_b=1.0
-    wool_b=1.0
-    grain_b=1.0
-    ore_b=1.
-    ratio_resources_weight = 1.0
-    need_for_resources_weight = 1.0
-    position_player_weight = 1.0
-    number_of_cards_weight = 1.0
-    need_resources_stolen_weight = 1.0
-    steal_from_player_weight = 1.0
-    defense_weight = 1.0
-    need_for_roads_weight = 1.0
 
     def __init__(self, agent_id, params=None):
         super().__init__(agent_id)
