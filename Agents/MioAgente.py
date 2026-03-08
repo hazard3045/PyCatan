@@ -1,8 +1,9 @@
 import random
 
-from Classes.Constants import HarborConstants, MaterialConstants, BuildConstants, TerrainConstants
+from Classes.Constants import DevelopmentCardConstants, HarborConstants, MaterialConstants, BuildConstants, TerrainConstants
 from Classes.Materials import Materials
 from Classes.TradeOffer import TradeOffer
+from Classes.Hand import Hand
 from Interfaces.AgentInterface import AgentInterface
 
 
@@ -155,25 +156,152 @@ class MioAgente(AgentInterface):
                 
         return best_road
 
-    def on_trade_offer(self, board_instance, offer=TradeOffer(), player_id=int):
-        answer = random.randint(0, 2)
-        if answer:
-            if answer == 2:
-                gives = Materials(random.randint(0, self.hand.resources.cereal),
-                                  random.randint(0, self.hand.resources.mineral),
-                                  random.randint(0, self.hand.resources.clay),
-                                  random.randint(0, self.hand.resources.wood),
-                                  random.randint(0, self.hand.resources.wool))
-                receives = Materials(random.randint(0, self.hand.resources.cereal),
-                                     random.randint(0, self.hand.resources.mineral),
-                                     random.randint(0, self.hand.resources.clay),
-                                     random.randint(0, self.hand.resources.wood),
-                                     random.randint(0, self.hand.resources.wool))
-                return TradeOffer(gives, receives)
-            else:
-                return True
-        else:
+    def get_exchange_rate(self, material_index):
+        """
+        Calculates the exchange rate for a given material based on owned harbors.
+        Checks the specific dictionary mapping nodes to HarborConstants.
+        """
+        best_rate = 4 # Default bank trade is 4:1
+        
+        # Mappa fissa dei porti (Node_ID -> HarborConstant)
+        harbors_map = {
+            0: HarborConstants.WOOD, 1: HarborConstants.WOOD,
+            3: HarborConstants.CEREAL, 4: HarborConstants.CEREAL,
+            14: HarborConstants.CLAY, 15: HarborConstants.CLAY,
+            28: HarborConstants.MINERAL, 38: HarborConstants.MINERAL,
+            50: HarborConstants.WOOL, 51: HarborConstants.WOOL,
+            7: HarborConstants.ALL, 17: HarborConstants.ALL, 26: HarborConstants.ALL, 
+            37: HarborConstants.ALL, 45: HarborConstants.ALL, 46: HarborConstants.ALL, 
+            47: HarborConstants.ALL, 48: HarborConstants.ALL
+        }
+        
+        # Iterate through the list of nodes using enumerate to get both index (node_id) and the node object
+        for node_id, node in enumerate(self.board.nodes):
+            
+            # If we own a settlement or city on this node
+            if node['player'] == self.id:
+                
+                # Check if this specific node ID has a harbor attached to it
+                if node_id in harbors_map:
+                    harbor_type = harbors_map[node_id]
+                    
+                    # If we have the specific 2:1 harbor for the material we want to give
+                    if harbor_type == material_index:
+                        return 2 # Best possible rate, we can return immediately
+                        
+                    # If we have a generic 3:1 harbor
+                    elif harbor_type == HarborConstants.ALL:
+                        best_rate = 3 # Save it, but keep checking in case we have a 2:1 elsewhere
+                        
+        return best_rate
+
+    def on_trade_offer(self, board_instance, offer, player_id):
+        # 'offer.gives' is what the opponent is giving TO US.
+        # 'offer.receives' is what the opponent wants FROM US.
+        opponent_gives = offer.gives 
+        opponent_wants = offer.receives
+
+        # --- STEP 1: Recalculate Genetic Goals ---
+        w_city = self.params.get('city_weight', 0.5)
+        w_town = self.params.get('town_weight', 0.5)
+
+        city_progress = (min(self.hand.resources.mineral, 3) + min(self.hand.resources.cereal, 2)) / 5.0
+        town_progress = (min(self.hand.resources.wood, 1) + min(self.hand.resources.clay, 1) + 
+                         min(self.hand.resources.cereal, 1) + min(self.hand.resources.wool, 1)) / 4.0
+
+        city_score = city_progress * w_city
+        town_score = town_progress * w_town
+
+        target_index = -1 
+        target_is_city = False
+        target_is_town = False
+
+        if city_score > town_score and city_score > 0:
+            target_is_city = True
+            if self.hand.resources.mineral < 3:
+                target_index = 1 
+            elif self.hand.resources.cereal < 2:
+                target_index = 0 
+                
+        elif town_score >= city_score and town_score > 0:
+            target_is_town = True
+            if self.hand.resources.wood == 0: target_index = 3
+            elif self.hand.resources.clay == 0: target_index = 2
+            elif self.hand.resources.cereal == 0: target_index = 0
+            elif self.hand.resources.wool == 0: target_index = 4
+
+        # --- STEP 2: Identify Surplus and Protected Resources ---
+        my_res = [
+            self.hand.resources.cereal,
+            self.hand.resources.mineral,
+            self.hand.resources.clay,
+            self.hand.resources.wood,
+            self.hand.resources.wool
+        ]
+        
+        is_protected = [False, False, False, False, False]
+        if target_is_city: 
+            is_protected[0] = True 
+            is_protected[1] = True 
+        elif target_is_town:
+            is_protected[0] = True 
+            is_protected[2] = True 
+            is_protected[3] = True 
+            is_protected[4] = True 
+
+        # Find ALL resources that are in surplus (not protected and count > 0)
+        surplus_indices = []
+        for i in range(5):
+            if not is_protected[i] and my_res[i] > 0 and i != target_index:
+                surplus_indices.append(i)
+
+        opp_gives_arr = [opponent_gives.cereal, opponent_gives.mineral, opponent_gives.clay, opponent_gives.wood, opponent_gives.wool]
+        opp_wants_arr = [opponent_wants.cereal, opponent_wants.mineral, opponent_wants.clay, opponent_wants.wood, opponent_wants.wool]
+
+        takes_protected = any(opp_wants_arr[i] > 0 and is_protected[i] for i in range(5))
+        gives_target = (target_index != -1 and opp_gives_arr[target_index] > 0)
+
+        # --- STEP 3: Robber Anxiety ---
+        w_anxiety = self.params.get('weight_robber_anxiety', 0.5)
+        total_cards = sum(my_res)
+        cards_we_get = sum(opp_gives_arr)
+        cards_we_give = sum(opp_wants_arr)
+        new_total = total_cards + cards_we_get - cards_we_give
+
+        if new_total > 7 and cards_we_get >= cards_we_give and random.random() < w_anxiety:
             return False
+
+        # --- STEP 4: Accept or Counter-Offer ---
+
+        # 1. ACCEPT: Perfect trade
+        if gives_target and not takes_protected:
+            return True
+            
+        # 2. COUNTER-OFFER: "The Sweetener" (Scenario 1 & 2)
+        if target_index != -1 and len(surplus_indices) > 0:
+            if takes_protected or not gives_target:
+                gives_array = [0, 0, 0, 0, 0]
+                receives_array = [0, 0, 0, 0, 0]
+                
+                # We offer 1 unit of our BEST surplus
+                primary_surplus = max(surplus_indices, key=lambda idx: my_res[idx])
+                gives_array[primary_surplus] = 1
+                
+                # ADD SWEETENER: If we have another different surplus, we add 1 unit of that too!
+                # This implements your "Scenario 1+: offering an extra thing if I have it"
+                for extra_idx in surplus_indices:
+                    if extra_idx != primary_surplus:
+                        gives_array[extra_idx] = 1
+                        break # We only add ONE extra type of resource to avoid being too poor
+                
+                receives_array[target_index] = 1
+                
+                new_gives = Materials(gives_array[0], gives_array[1], gives_array[2], gives_array[3], gives_array[4])
+                new_receives = Materials(receives_array[0], receives_array[1], receives_array[2], receives_array[3], receives_array[4])
+                
+                return TradeOffer(new_gives, new_receives)
+
+        return False
 
     def on_turn_start(self):
         # self.development_cards_hand.add_card(DevelopmentCard(99, 0, 0))
@@ -182,6 +310,73 @@ class MioAgente(AgentInterface):
         return None
 
     def on_having_more_than_7_materials_when_thief_is_called(self):
+        # 1. Retrieve the complete DNA: Atomic resource weights
+        # These are the specific genetic parameters for each material
+        w_cereal = self.params.get('weight_cereal', 0.5)
+        w_mineral = self.params.get('weight_mineral', 0.5)
+        w_clay = self.params.get('weight_clay', 0.5)
+        w_wood = self.params.get('weight_wood', 0.5)
+        w_wool = self.params.get('weight_wool', 0.5)
+
+        # Also retrieve the macro-strategy weights
+        w_city = self.params.get('city_weight', 0.5)
+        w_town = self.params.get('town_weight', 0.5)
+
+        # 2. Map resource indices to their genetic weights for sorting
+        # Index: 0:Cereal, 1:Mineral, 2:Clay, 3:Wood, 4:Wool
+        genetic_map = {
+            0: w_cereal,
+            1: w_mineral,
+            2: w_clay,
+            3: w_wood,
+            4: w_wool
+        }
+
+        # 3. Calculate current strategy based on progress and macro-weights
+        city_progress = (min(self.hand.resources.mineral, 3) + min(self.hand.resources.cereal, 2)) / 5.0
+        town_progress = (min(self.hand.resources.wood, 1) + min(self.hand.resources.clay, 1) + 
+                         min(self.hand.resources.cereal, 1) + min(self.hand.resources.wool, 1)) / 4.0
+
+        is_city_priority = (city_progress * w_city) > (town_progress * w_town)
+
+        # 4. Define the Rule-Mandated Discard Amount
+        to_discard = self.hand.get_total() // 2
+
+        # 5. Execution: Discarding by Genetic Priority
+        for _ in range(to_discard):
+            # We create a list of available resources
+            available_indices = []
+            if self.hand.resources.cereal > 0: available_indices.append(0)
+            if self.hand.resources.mineral > 0: available_indices.append(1)
+            if self.hand.resources.clay > 0: available_indices.append(2)
+            if self.hand.resources.wood > 0: available_indices.append(3)
+            if self.hand.resources.wool > 0: available_indices.append(4)
+
+            # --- DYNAMIC GENETIC FILTER ---
+            def is_essential(idx):
+                if is_city_priority:
+                    return (idx == 0 and self.hand.resources.cereal <= 2) or \
+                           (idx == 1 and self.hand.resources.mineral <= 3)
+                else:
+                    return (idx == 0 and self.hand.resources.cereal <= 1) or \
+                           (idx == 2 and self.hand.resources.clay <= 1) or \
+                           (idx == 3 and self.hand.resources.wood <= 1) or \
+                           (idx == 4 and self.hand.resources.wool <= 1)
+
+            # Split available resources into two tiers
+            surplus = [i for i in available_indices if not is_essential(i)]
+            essentials = [i for i in available_indices if is_essential(i)]
+
+            # Pick the victim:
+            # First, check surplus. If empty, check essentials.
+            # In both cases, we pick the one with the LOWEST genetic weight.
+            if surplus:
+                target_idx = min(surplus, key=lambda i: genetic_map[i])
+            else:
+                target_idx = min(essentials, key=lambda i: genetic_map[i])
+
+            self.hand.remove_material(target_idx, 1)
+
         return self.hand
 
     def on_moving_thief(self):
@@ -198,36 +393,104 @@ class MioAgente(AgentInterface):
         return None
 
     def on_commerce_phase(self):
-        if len(self.development_cards_hand.hand) and random.randint(0, 1):
-            return self.development_cards_hand.select_card(0)
+        # 1. Play Monopoly if we recently gifted >3 resources of the same type
+        if self.material_given_more_than_three is not None:
+            if len(self.development_cards_hand.hand):
+                for i in range(0, len(self.development_cards_hand.hand)):
+                    if self.development_cards_hand.hand[i].effect == DevelopmentCardConstants.MONOPOLY_EFFECT:
+                        return self.development_cards_hand.select_card(i)
 
-        answer = random.randint(0, 1)
-        if answer:
-            if self.hand.resources.cereal >= 4:
-                return {'gives': MaterialConstants.CEREAL, 'receives': MaterialConstants.MINERAL}
-            if self.hand.resources.mineral >= 4:
-                return {'gives': MaterialConstants.MINERAL, 'receives': MaterialConstants.CEREAL}
-            if self.hand.resources.clay >= 4:
-                return {'gives': MaterialConstants.CLAY, 'receives': MaterialConstants.CEREAL}
-            if self.hand.resources.wood >= 4:
-                return {'gives': MaterialConstants.WOOD, 'receives': MaterialConstants.CEREAL}
-            if self.hand.resources.wool >= 4:
-                return {'gives': MaterialConstants.WOOL, 'receives': MaterialConstants.CEREAL}
+        # --- STEP 1: Robber Anxiety (The 7-Card Threshold) ---
+        w_anxiety = self.params.get('weight_robber_anxiety', 0.5)
+        
+        # Calculate total cards in hand
+        total_cards = (self.hand.resources.cereal + self.hand.resources.mineral + 
+                       self.hand.resources.clay + self.hand.resources.wood + self.hand.resources.wool)
+        
+        # The agent panics if it has more than 7 cards and the genetic roll succeeds
+        is_anxious = (total_cards > 7) and (random.random() < w_anxiety)
 
+        # --- STEP 2: Identify Goal using Genetics ---
+        w_city = self.params.get('weight_of_city', 0.5)
+        w_town = self.params.get('weight_town', 0.5)
+
+        target_index = -1 
+        target_is_city = False
+        target_is_town = False
+        
+        # Calculate progress towards each building type (Percentage from 0.0 to 1.0)
+        city_progress = (min(self.hand.resources.mineral, 3) + min(self.hand.resources.cereal, 2)) / 5.0
+        town_progress = (min(self.hand.resources.wood, 1) + min(self.hand.resources.clay, 1) + 
+                         min(self.hand.resources.cereal, 1) + min(self.hand.resources.wool, 1)) / 4.0
+
+        # Apply genetic weights to calculate the absolute "Desire" for each goal
+        city_score = city_progress * w_city
+        town_score = town_progress * w_town
+
+        # Decide objective based on the highest genetic desire
+        if city_score > town_score and city_score > 0:
+            target_is_city = True
+            if self.hand.resources.mineral < 3:
+                target_index = 1 # Need Mineral
+            elif self.hand.resources.cereal < 2:
+                target_index = 0 # Need Cereal
+                
+        elif town_score >= city_score and town_score > 0:
+            target_is_town = True
+            if self.hand.resources.wood == 0:
+                target_index = 3 # Need Wood
+            elif self.hand.resources.clay == 0:
+                target_index = 2 # Need Clay
+            elif self.hand.resources.cereal == 0:
+                target_index = 0 # Need Cereal
+            elif self.hand.resources.wool == 0:
+                target_index = 4 # Need Wool
+
+        # If we are panicking but don't have a specific target, we pick Mineral (most valuable)
+        # just to force a trade and reduce our hand size!
+        if is_anxious and target_index == -1:
+            target_index = 1 
+
+        if target_index == -1:
             return None
-        else:
-            gives = Materials(random.randint(0, self.hand.resources.cereal),
-                              random.randint(0, self.hand.resources.mineral),
-                              random.randint(0, self.hand.resources.clay),
-                              random.randint(0, self.hand.resources.wood),
-                              random.randint(0, self.hand.resources.wool))
-            receives = Materials(random.randint(0, self.hand.resources.cereal),
-                                 random.randint(0, self.hand.resources.mineral),
-                                 random.randint(0, self.hand.resources.clay),
-                                 random.randint(0, self.hand.resources.wood),
-                                 random.randint(0, self.hand.resources.wool))
-            trade_offer = TradeOffer(gives, receives)
-            return trade_offer
+
+        # --- STEP 3: Identify Surplus and Protect Goal Resources ---
+        my_res = [
+            self.hand.resources.cereal,
+            self.hand.resources.mineral,
+            self.hand.resources.clay,
+            self.hand.resources.wood,
+            self.hand.resources.wool
+        ]
+        
+        # We protect our resources ONLY if we are NOT panicking about the robber.
+        # If we are anxious, survival comes first: we are willing to trade our savings to avoid losing half our hand.
+        if not is_anxious:
+            if target_is_city: 
+                my_res[0] = 0 # Protect Cereal
+                my_res[1] = 0 # Protect Mineral
+                
+            if target_is_town:
+                my_res[0] = 0 # Protect Cereal
+                my_res[2] = 0 # Protect Clay
+                my_res[3] = 0 # Protect Wood
+                my_res[4] = 0 # Protect Wool
+
+        # Find the resource we have the most of (that isn't protected)
+        surplus_amount = 0
+        surplus_index = -1
+        for i in range(5):
+            if my_res[i] > surplus_amount and i != target_index:
+                surplus_amount = my_res[i]
+                surplus_index = i
+
+        # --- STEP 4: Create the TradeOffer (Maritime or Panic Domestic) ---
+        if surplus_index != -1:
+            
+            # 1. MARITIME TRADE (Priority & Panic Saver)
+            exchange_rate = self.get_exchange_rate(surplus_index)
+            
+            # If we have enough for a bank/port trade, do it
 
     def on_build_phase(self, board_instance):
         self.board = board_instance

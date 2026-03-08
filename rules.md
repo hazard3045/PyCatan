@@ -100,6 +100,108 @@ For every legal road placement, the agent evaluates the finishing node (where th
 
 --- 
 
+Che soddisfazione quel 10/10! Hai letteralmente trasformato un bot che tirava i dadi a caso in un calcolatore spietato.
+
+Ecco il Markdown completo per la tua `on_commerce_phase`, strutturato in inglese come i precedenti. Ho inserito la tabella dei parametri genetici e la spiegazione matematica del calcolo del "Desiderio" (Desire), che è il vero cuore pulsante di questa intelligenza artificiale.
+
+Puoi copiare e incollare questa sezione direttamente nel tuo report!
+
+---
+
+## 💱 Commerce Phase Strategy (`on_commerce_phase`)
+
+The commerce phase represents a shift from random, aimless trading to a highly focused **Targeted Trade** system. The agent acts exclusively to fulfill its immediate strategic needs, driven entirely by its genetic parameters, while actively preventing the accidental strengthening of its opponents.
+
+### 1. Genetic Trade Targeting (Continuous Evaluation)
+The agent calculates the percentage of completion for both a City (out of 5 cards) and a Town (out of 4 cards) and multiplies it by the respective genetic parameter to calculate a final "Desire Score":
+
+$Desire_{City} = \left( \frac{\min(Mineral, 3) + \min(Cereal, 2)}{5} \right) \times weight\_of\_city$
+$Desire_{Town} = \left( \frac{\min(Wood, 1) + \min(Clay, 1) + \min(Cereal, 1) + \min(Wool, 1)}{4} \right) \times weight\_town$
+
+The agent automatically targets the missing resource for the objective that yields the highest $Desire$ score.
+
+### Genetic Parameters Used in Commerce Phase
+
+| Parameter | Function / Role | Strategic Reasoning (Why it is used) |
+| --- | --- | --- |
+| **`city_weight`** | Multiplier for the City progress score. | Prevents "threshold flip-flopping." If the AI has a high weight for cities, it will stubbornly seek Ore/Wheat even if it only holds a single card, refusing to be distracted by random Wood/Clay pickups. |
+| **`town_weight`** | Multiplier for the Town progress score. | Allows the evolutionary algorithm to create expansionist agents. A high weight here forces the agent to trade away Ore/Wheat to aggressively claim territory before opponents do. |
+| **`weight_robber_anxiety`** | Risk management modifier for hand size (> 7 cards). | Simulates the fear of the Robber. When triggered, the agent disables its resource protection algorithms and initiates a "Fire Sale" (Panic Trade). This tempts opponents to accept the trade, allowing the agent to intentionally shrink its hand size to 7 or fewer cards and survive a "7" dice roll. |
+### 2. Surplus Identification & Resource Protection
+
+Once an objective is locked in, the agent scans its hand to find the most abundant resource (Surplus) to offer. To prevent self-sabotage, it applies a strict **Protection Filter**:
+
+* If targeting a **City**, it forces its internal evaluation count of Cereal and Mineral to 0.
+* If targeting a **Town**, it forces Clay, Wood, Cereal, and Wool to 0.
+* This guarantees the agent will never accidentally offer the exact materials it is trying to save, picking only from truly useless surplus resources.
+
+### 3. Maritime vs. Domestic Trade Prioritization
+
+When the agent determines its surplus, it explicitly prioritizes **Maritime Trade** (trading with the bank or controlled ports) over **Domestic Trade** (player-to-player offers).
+
+* **Dynamic Exchange Rates:** The agent actively scans its built nodes (`get_exchange_rate`) to calculate the exact cost of trading its surplus resource by checking the `self.harbors` map (evaluating 2:1 specialized ports, 3:1 generic ports, and the default 4:1 bank rate).
+* **Zero-Sum Advantage:** If the agent holds enough surplus to meet its maritime exchange rate, it executes the trade directly with the board (`{'gives': surplus, 'receives': target}`). This acquires the targeted resource without funneling any useful cards to opponents.
+* **Domestic Fallback:** Only if the agent falls short of the maritime threshold will it construct a 1:1 `TradeOffer` and broadcast it to the other players as a last resort.
+
+### 4. The Monopoly Ambush (Card Synergy)
+
+Before initiating any standard trades, the agent executes a highly aggressive check for development card synergy. If the agent recently traded away a large quantity of a specific resource (more than 3) to another player, it immediately searches its hand for a **Monopoly** card. If found, it plays it to instantly steal back all the resources it just traded away, creating a massive net positive in resource economy.
+
+---
+
+Ecco il documento sintetico e professionale per il tuo report riguardante la fase di negoziazione passiva.
+
+---
+
+# 🤝 Passive Trade Negotiation (`on_trade_offer`)
+
+The `on_trade_offer` method acts as a strategic gatekeeper, evaluating incoming proposals from opponents. Rather than blindly accepting, the agent employs a reactive negotiation strategy driven by its genetic priorities.
+
+### 1. Goal-Oriented Evaluation
+
+The agent instantly synchronizes the incoming offer with its internal genetic goals (`city_weight` and `town_weight`). It recalculates its building progress and checks the proposed trade against two filters:
+
+* **The Protection Filter:** Any trade requesting resources critical to the agent's current genetic objective is automatically flagged for rejection or re-negotiation.
+* **The Strategic Alignment:** A trade is only accepted if it explicitly delivers a resource required to advance the higher-scored objective.
+
+### 2. Defensive Risk Assessment
+
+The agent incorporates the `weight_robber_anxiety` parameter as a final sanity check. Before committing to a trade, it calculates the `new_total` hand size. If accepting the trade pushes the agent’s hand size above 7 cards, the agent evaluates the risk of a "7" dice roll. If the anxiety threshold is triggered, it will reject an otherwise "good" trade to avoid losing half its resources to the Robber.
+
+### 3. The "Sweetened" Counter-Offer
+
+If an offer is sub-optimal but the opponent possesses a required resource, the agent does not simply reject. It attempts to "redirect" the deal into a beneficial counter-offer:
+
+* **Redirection:** If the opponent offers a useless resource but needs the agent's surplus, the agent refuses the original deal and proposes a strict 1:1 exchange for its target resource.
+* **The Sweetener (2:1 Logic):** To ensure a higher probability of success, the agent will bundle multiple surplus resources (e.g., offering a combination of two different useless materials) in exchange for the single resource it needs. This effectively "sweetens" the deal for the opponent while protecting the agent's core build requirements.
+
+### Genetic Parameter Influence
+
+| Parameter | Impact on Negotiation |
+| --- | --- |
+| **`city_weight`** | Directly dictates which resources are considered "Protected" (Minerals/Cereals). Influences the decision to accept or counter-offer for City components. |
+| **`town_weight`** | Directly dictates which resources are considered "Protected" (Wood/Clay/Wool). Influences the decision to accept or counter-offer for Town components. |
+| **`weight_robber_anxiety`** | Acts as a hard veto for any trade that increases hand size above 7, effectively putting safety over expansion when the threat level is high. |
+
+---
+
+# 🛡️ Strategic Discard Management
+
+To ensure maximum survival during the Robber's activation, the agent implements a hierarchical discard logic that directly manipulates its Hand object. This method prioritizes the retention of "Win-Condition" resources based on genetic scoring.
+1. Direct Hand Manipulation
+
+2. Goal-Based Hierarchy
+
+The agent performs a "Genetic Triage" before discarding:
+
+    City Priority: If the city_weight score is dominant, the agent creates a defensive shell around Minerals and Cereals. It systematically removes Wool, Clay, and Wood (in that order) until the hand size is exactly 7.
+
+    Town Priority: If town_weight is higher, the agent protects the balance of Wood, Clay, Cereal, and Wool, identifying Minerals as the primary disposable resource. 
+    
+3. Surplus vs. Essential Sacrifice
+
+The removal loop is designed to strip away surplus first (e.g., discarding a 3rd Cereal only after all Wool is gone). If the agent is forced to discard essential materials, it does so by following the reverse order of building importance, preserving the rarest required materials until the very last iteration of the loop.
+
 
 # All parameters
 new_resources_weight 
