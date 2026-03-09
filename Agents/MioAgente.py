@@ -380,12 +380,61 @@ class MioAgente(AgentInterface):
         return self.hand
 
     def on_moving_thief(self):
-        terrain = random.randint(0, 18)
-        player = -1
-        for node in self.board.terrain[terrain]['contacting_nodes']:
-            if self.board.nodes[node]['player'] != -1:
-                player = self.board.nodes[node]['player']
-        return {'terrain': terrain, 'player': player}
+        # 1. Retrieve the DNA: Atomic resource weights
+        w_cereal = self.params.get('weight_cereal', 0.5)
+        w_mineral = self.params.get('weight_mineral', 0.5)
+        w_clay = self.params.get('weight_clay', 0.5)
+        w_wood = self.params.get('weight_wood', 0.5)
+        w_wool = self.params.get('weight_wool', 0.5)
+        
+        genetic_weights = [w_cereal, w_mineral, w_clay, w_wood, w_wool]
+
+        best_terrain = -1
+        target_player = -1
+        max_threat_score = -1
+
+        # 2. Iterate through all hexes (0-18)
+        for t_idx in range(19):
+            terrain_data = self.board.terrain[t_idx]
+            
+            res_type = terrain_data.get('terrain_type', terrain_data.get('type', -1))
+            
+            # Skip desert or if the thief is already there
+            if res_type == -1 or terrain_data.get('has_thief', False):
+                continue
+            
+            material_value = genetic_weights[res_type] if 0 <= res_type < 5 else 0.1
+            num = terrain_data.get('probability', terrain_data.get('number', 0))
+            prob_score = self.get_probability_dots(num)
+
+            # 3. Target Filtering: Check for enemies and avoid self-blocking
+            enemies_on_hex = []
+            is_self_present = False
+            
+            for node_idx in terrain_data['contacting_nodes']:
+                p_id = self.board.nodes[node_idx]['player']
+                
+                # FIX: Use self.id instead of self.my_id
+                if p_id == self.id:
+                    is_self_present = True
+                    break 
+                elif p_id != -1:
+                    enemies_on_hex.append(p_id)
+
+            # 4. Scoring logic (Sabotage Vector)
+            if not is_self_present and enemies_on_hex:
+                threat_score = material_value * prob_score * len(enemies_on_hex)
+                
+                if threat_score > max_threat_score:
+                    max_threat_score = threat_score
+                    best_terrain = t_idx
+                    target_player = enemies_on_hex[0]
+
+        # 5. Emergency Fallback: If no ideal target is found, pick the desert or 0
+        if best_terrain == -1:
+            return {'terrain': 0, 'player': -1}
+
+        return {'terrain': best_terrain, 'player': target_player}
 
     def on_turn_end(self):
         if len(self.development_cards_hand.hand) and random.randint(0, 1):
@@ -578,11 +627,6 @@ class MioAgente(AgentInterface):
             
         return best_node_id, best_road_to_id
 
-    def on_monopoly_card_use(self):
-        material = random.randint(0, 4)
-        return material
-
-    # noinspection DuplicatedCode
     def on_road_building_card_use(self):
         valid_nodes = self.board.valid_road_nodes(self.id)
         if len(valid_nodes) > 1:
@@ -606,3 +650,82 @@ class MioAgente(AgentInterface):
     def on_year_of_plenty_card_use(self):
         material, material2 = random.randint(0, 4), random.randint(0, 4)
         return {'material': material, 'material_2': material2}
+
+    def on_monopoly_card_use(self):
+        """
+        Strategic Monopoly logic: calculates a score for each resource based on 
+        internal needs (DNA) and enemy map abundance (Sabotage).
+        """
+        # 1. Retrieve DNA priorities and atomic weights
+        # Using the standardized parameter names from your previous successful tests
+        w_city = self.params.get('city_weight', 0.5)
+        w_town = self.params.get('town_weight', 0.5)
+        
+        # Resource weights: 0:Cereal, 1:Mineral, 2:Clay, 3:Wood, 4:Wool
+        w_res = [
+            self.params.get('weight_cereal', 0.5),
+            self.params.get('weight_mineral', 0.5),
+            self.params.get('weight_clay', 0.5),
+            self.params.get('weight_wood', 0.5),
+            self.params.get('weight_wool', 0.5)
+        ]
+
+        # 2. Internal Necessity Score (Gap Analysis)
+        current_res = [
+            self.hand.resources.cereal, self.hand.resources.mineral,
+            self.hand.resources.clay, self.hand.resources.wood, self.hand.resources.wool
+        ]
+        
+        # Determine current priority goal based on weighted progress
+        city_prog = (min(current_res[1], 3) + min(current_res[0], 2)) / 5.0
+        town_prog = (min(current_res[3], 1) + min(current_res[2], 1) + 
+                     min(current_res[0], 1) + min(current_res[4], 1)) / 4.0
+        
+        is_city_priority = (city_prog * w_city) > (town_prog * w_town)
+        needed_counts = [2, 3, 0, 0, 0] if is_city_priority else [1, 0, 1, 1, 1]
+
+        # 3. Enemy Map Presence Score (Sabotage Vector)
+        # We analyze the board to estimate which resources opponents are likely holding
+        enemy_production_potential = [0, 0, 0, 0, 0]
+        
+        for t_idx in range(19):
+            terrain_data = self.board.terrain[t_idx]
+            # Handle potential key differences ('type' or 'material')
+            res_type = terrain_data.get('type', terrain_data.get('material', -1))
+            
+            # Skip non-resource hexes (Desert)
+            if res_type == -1 or res_type >= 5: 
+                continue 
+            
+            # Probability based on dice number
+            num = terrain_data.get('number', 0)
+            prob = 6 - abs(7 - num) if num != 0 else 0
+            
+            # Count enemy settlements/cities on this hex
+            for node_idx in terrain_data['contacting_nodes']:
+                p_id = self.board.nodes[node_idx]['player']
+                if p_id != -1 and p_id != self.my_id:
+                    # Higher probability of enemy possession if they have buildings on high-dot hexes
+                    enemy_production_potential[res_type] += prob
+
+        # 4. Final Scoring Function
+        best_material = 1 # Default to Mineral
+        max_score = -1
+
+        for i in range(5):
+            # Deficiency: How many units are missing for the current genetic goal?
+            deficiency = max(0, needed_counts[i] - current_res[i])
+            
+            # Sabotage: How much impact will this have on opponents' hands?
+            sabotage_value = enemy_production_potential[i]
+            
+            # SCORE = (Need * DNA_Weight) + (Enemy_Wealth * 0.5)
+            # This ensures we pick what we need, but favor resources that hurt others more.
+            score = (deficiency * (w_res[i] + 0.1)) + (sabotage_value * 0.5)
+            
+            if score > max_score:
+                max_score = score
+                best_material = i
+
+        # Return the integer index of the chosen material (0-4)
+        return best_material
