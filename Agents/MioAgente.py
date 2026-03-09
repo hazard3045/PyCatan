@@ -627,26 +627,6 @@ class MioAgente(AgentInterface):
             
         return best_node_id, best_road_to_id
 
-    def on_road_building_card_use(self):
-        valid_nodes = self.board.valid_road_nodes(self.id)
-        if len(valid_nodes) > 1:
-            while True:
-                road_node = random.randint(0, len(valid_nodes) - 1)
-                road_node_2 = random.randint(0, len(valid_nodes) - 1)
-                if road_node != road_node_2:
-                    return {'node_id': valid_nodes[road_node]['starting_node'],
-                            'road_to': valid_nodes[road_node]['finishing_node'],
-                            'node_id_2': valid_nodes[road_node_2]['starting_node'],
-                            'road_to_2': valid_nodes[road_node_2]['finishing_node'],
-                            }
-        elif len(valid_nodes) == 1:
-            return {'node_id': valid_nodes[0]['starting_node'],
-                    'road_to': valid_nodes[0]['finishing_node'],
-                    'node_id_2': None,
-                    'road_to_2': None,
-                    }
-        return None
-
     def on_year_of_plenty_card_use(self):
         material, material2 = random.randint(0, 4), random.randint(0, 4)
         return {'material': material, 'material_2': material2}
@@ -729,3 +709,71 @@ class MioAgente(AgentInterface):
 
         # Return the integer index of the chosen material (0-4)
         return best_material
+   
+    def on_road_building_card_use(self):
+        # Retrieve all valid road placement options
+        valid_roads = self.board.valid_road_nodes(self.id)
+        if not valid_roads:
+            return None
+
+        # 1. Retrieve genetic parameters 
+        w_div = self.params.get('weight_material_diversity', 0.4)
+        w_block = self.params.get('weight_block_opponent', 0.4)
+        w_exp = self.params.get('weight_road_expansion', 0.6)
+
+        # 2. Identify materials already produced by our network 
+        my_materials = set()
+        for node in self.board.nodes:
+            if node['player'] == self.id:
+                for terrain_idx in node['contacting_terrain']:
+                    t_type = self.board.terrain[terrain_idx].get('terrain_type', -1)
+                    if t_type != -1: 
+                        my_materials.add(t_type)
+
+        # 3. Score each valid road individually
+        scored_roads = []
+        for road in valid_roads:
+            score = 0
+            target_node_id = road['finishing_node']
+            target_node = self.board.nodes[target_node_id]
+
+            # --- DIVERSITY SCORE ---
+            # Check if this road leads to a new resource type [cite: 36, 167]
+            for terrain_idx in target_node['contacting_terrain']:
+                t_type = self.board.terrain[terrain_idx].get('terrain_type', -1)
+                if t_type != -1 and t_type not in my_materials:
+                    score += 2.5 * w_div 
+
+            # --- BLOCKING SCORE ---
+            # Check if this node is a potential spot for any opponent [cite: 44, 163]
+            for p_id in range(4):
+                if p_id != self.id:
+                    # If an opponent could build here, blocking it is valuable
+                    if target_node_id in self.board.valid_town_nodes(p_id):
+                        score += 3.5 * w_block 
+
+            # --- EXPANSION SCORE ---
+            # Reward nodes that have more exit routes (centrality) [cite: 163]
+            score += len(target_node['adjacent']) * w_exp
+            
+            scored_roads.append({'road': road, 'score': score})
+
+        # Sort roads by score descending
+        scored_roads.sort(key=lambda x: x['score'], reverse=True)
+
+        # 4. Return the best two roads found 
+        # Road 1 is the absolute best
+        r1 = scored_roads[0]['road']
+        
+        # Road 2 is the second best (if available)
+        if len(scored_roads) > 1:
+            r2 = scored_roads[1]['road']
+            return {
+                'node_id': r1['starting_node'], 'road_to': r1['finishing_node'],
+                'node_id_2': r2['starting_node'], 'road_to_2': r2['finishing_node']
+            }
+        else:
+            return {
+                'node_id': r1['starting_node'], 'road_to': r1['finishing_node'],
+                'node_id_2': None, 'road_to_2': None
+            }
