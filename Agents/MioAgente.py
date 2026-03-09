@@ -628,8 +628,39 @@ class MioAgente(AgentInterface):
         return best_node_id, best_road_to_id
 
     def on_year_of_plenty_card_use(self):
-        material, material2 = random.randint(0, 4), random.randint(0, 4)
-        return {'material': material, 'material_2': material2}
+        # 1. Retrieve DNA weights
+        w_city = self.params.get('city_weight', 0.5)
+        w_town = self.params.get('town_weight', 0.5)
+
+        # Index Mapping: 0:Cereal, 1:Mineral, 2:Clay, 3:Wood, 4:Wool
+        city_req = [2, 3, 0, 0, 0]
+        town_req = [1, 0, 1, 1, 1]
+        
+        current_res = [
+            self.hand.resources.cereal, self.hand.resources.mineral,
+            self.hand.resources.clay, self.hand.resources.wood, self.hand.resources.wool
+        ]
+
+        # 2. Calculate Desire based on progress
+        city_prog = sum(min(current_res[i], city_req[i]) for i in range(5)) / 5.0
+        town_prog = sum(min(current_res[i], town_req[i]) for i in range(5)) / 4.0
+        
+        # Decide goal based on highest weighted desire
+        target_goal = city_req if (city_prog * w_city) >= (town_prog * w_town) else town_req
+        
+        missing_materials = []
+        for i in range(5):
+            needed = max(0, target_goal[i] - current_res[i])
+            for _ in range(needed):
+                missing_materials.append(i)
+
+        # 3. Selection
+        if len(missing_materials) >= 2:
+            return {'material': missing_materials[0], 'material_2': missing_materials[1]}
+        elif len(missing_materials) == 1:
+            return {'material': missing_materials[0], 'material_2': 1} # Mineral as fallback
+        else:
+            return {'material': 1, 'material_2': 0} # Default to Ore and Wheat
 
     def on_monopoly_card_use(self):
         """
@@ -684,7 +715,7 @@ class MioAgente(AgentInterface):
             # Count enemy settlements/cities on this hex
             for node_idx in terrain_data['contacting_nodes']:
                 p_id = self.board.nodes[node_idx]['player']
-                if p_id != -1 and p_id != self.my_id:
+                if p_id != -1 and p_id != self.id:
                     # Higher probability of enemy possession if they have buildings on high-dot hexes
                     enemy_production_potential[res_type] += prob
 
