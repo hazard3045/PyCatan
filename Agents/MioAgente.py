@@ -40,8 +40,8 @@ class MioAgente(AgentInterface):
         w_wool = self.params.get('weight_wool', 0.8)
         w_harbor = self.params.get('start_harbor_bonus', 1.5)
         
-        # NEW: Genetic parameter for diversity (how much we value NEW resources)
-        w_diversity = self.params.get('weight_resource_diversity', 2.0)
+        # Genetic parameter for diversity (how much we value resources)
+        w_diversity = self.params.get('weight_material_diversity', 2.0)
         
         weights = {
             TerrainConstants.WOOD: w_wood,
@@ -536,13 +536,41 @@ class MioAgente(AgentInterface):
                 surplus_amount = my_res[i]
                 surplus_index = i
 
-        # --- STEP 4: Create the TradeOffer (Maritime or Panic Domestic) ---
+        # --- STEP 4: Create the TradeOffer ---
         if surplus_index != -1:
-            
-            # 1. MARITIME TRADE (Priority & Panic Saver)
+
             exchange_rate = self.get_exchange_rate(surplus_index)
-            
-            # If we have enough for a bank/port trade, do it
+
+            # Maritime trade
+            if surplus_amount >= exchange_rate:
+
+                gives = [0,0,0,0,0]
+                receives = [0,0,0,0,0]
+
+                gives[surplus_index] = exchange_rate
+                receives[target_index] = 1
+
+                return TradeOffer(
+                    Materials(*gives),
+                    Materials(*receives)
+                )
+
+            # Domestic trade proposal
+            else:
+
+                gives = [0,0,0,0,0]
+                receives = [0,0,0,0,0]
+
+                gives[surplus_index] = 1
+                receives[target_index] = 1
+
+                return TradeOffer(
+                    Materials(*gives),
+                    Materials(*receives)
+                )
+
+        # If no trade is possible
+        return None
 
     def on_build_phase(self, board_instance):
         self.board = board_instance

@@ -96,16 +96,6 @@ For every legal road placement, the agent evaluates the finishing node (where th
 
     The agent ultimately builds the road that yields the highest combined future potential.
 
-
-
---- 
-
-Che soddisfazione quel 10/10! Hai letteralmente trasformato un bot che tirava i dadi a caso in un calcolatore spietato.
-
-Ecco il Markdown completo per la tua `on_commerce_phase`, strutturato in inglese come i precedenti. Ho inserito la tabella dei parametri genetici e la spiegazione matematica del calcolo del "Desiderio" (Desire), che è il vero cuore pulsante di questa intelligenza artificiale.
-
-Puoi copiare e incollare questa sezione direttamente nel tuo report!
-
 ---
 
 ## 💱 Commerce Phase Strategy (`on_commerce_phase`)
