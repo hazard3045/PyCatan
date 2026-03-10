@@ -74,6 +74,7 @@ dict_parameters = {
     "need_for_roads_weight": (0, 10)
 }
 IND_SIZE = len(dict_parameters)
+N_games_per_evaluation =  20 # Number of games to simulate for each evaluation
 
 def find_winner(trace):
     """Retourne l'identifiant du joueur gagnant ('J0', 'J1', ...) depuis une trace JSON."""
@@ -114,6 +115,7 @@ def evaluate_agent(individual):
 
     # Seed de base propre à cet individu pour diversifier les parties entre individus
     base_seed = hash(tuple(round(x, 6) for x in individual)) & 0xFFFFFF
+    import time
     for i in range(n_games):
         random.seed(base_seed + i)
         # Crée un agent neuf à chaque partie pour éviter l'accumulation d'état
@@ -143,10 +145,10 @@ def evaluate_agent(individual):
         shutil.rmtree(trace_path, ignore_errors=True)
 
         # Libère explicitement les objets pour éviter les fuites mémoire
-        del game_director, agent, players, opponents
-        gc.collect()
+       # del game_director, agent, players, opponents
+    # gc.collect()
 
-    return (victories,)
+    return (victories / N_games_per_evaluation,)
 
 # DEAP toolbox initialization
 toolbox = base.Toolbox()
@@ -159,18 +161,20 @@ toolbox.register("mutate", tools.mutGaussian, mu=0, sigma=1.0, indpb=0.2)
 toolbox.register("select", tools.selTournament, tournsize=3)
 
 # Genetic algorithm parameters
-POP_SIZE = 50      # Population size
-N_GEN = 20        # Number of generations
-CXPB = 0.5         # Crossover probability
-MUTPB = 0.2        # Mutation probability
-N_games_per_evaluation = 20  # Number of games to simulate for each evaluation
+POP_SIZE = 30   # Population size
+N_GEN = 30       # Number of generations
+CXPB = 0.3         # Crossover probability
+MUTPB = 0.4        # Mutation probability
+
 
 if __name__ == "__main__":
+
     # Parallélise les évaluations sur les cœurs disponibles (50% pour ne pas saturer la RAM)
-    porcentaje_workers = 0.5
+    porcentaje_workers = 0.8
     workers = max(1, int((os.cpu_count() or 1) * porcentaje_workers))
-    pool = multiprocessing.Pool(processes=workers)
+    pool = multiprocessing.Pool(processes=workers, maxtasksperchild=5)
     toolbox.register("map", pool.map)
+    
 
     # Create the initial population
     population = toolbox.population(n=POP_SIZE)
@@ -189,8 +193,17 @@ if __name__ == "__main__":
     # Record the best individuals
     hall_of_fame = tools.HallOfFame(1)
 
+    import time
+    try:
+        import psutil
+        psutil_available = True
+    except ImportError:
+        psutil_available = False
+        print("psutil non installé : la mémoire et les processus ne seront pas affichés.")
+
     # Manual loop for GA to print stats each generation
     for gen in range(N_GEN):
+        start_time = time.time()
         offspring = algorithms.varAnd(population, toolbox, cxpb=CXPB, mutpb=MUTPB)
         # Clamp each parameter to its bounds after mutation
         for ind in offspring:
@@ -202,7 +215,19 @@ if __name__ == "__main__":
         population = toolbox.select(offspring, k=len(population))
         hall_of_fame.update(population)
         record = stats.compile(population)
-        print(f"Génération {gen+1}: avg={record['avg']:.2f}, max={record['max']}, min={record['min']}")
+        end_time = time.time()
+        elapsed = end_time - start_time
+        speed = elapsed / len(offspring) if len(offspring) > 0 else 0
+        mem_str = ""
+        proc_str = ""
+        if psutil_available:
+            process = psutil.Process(os.getpid())
+            mem_mb = process.memory_info().rss / 1024 / 1024
+            mem_str = f" | RAM: {mem_mb:.2f} MB"
+            # Compte les processus Python actifs
+            python_procs = [p for p in psutil.process_iter(['name']) if p.info['name'] and 'python' in p.info['name'].lower()]
+            proc_str = f" | Python procs: {len(python_procs)}"
+        print(f"Génération {gen+1}: avg={record['avg']:.2f}, max={record['max']}, min={record['min']} | Temps: {elapsed:.2f}s | Vitesse: {speed:.2f}s/individu{mem_str}{proc_str}")
 
     # Display the results
     print("\nBest individual found:", hall_of_fame[0])
@@ -214,7 +239,11 @@ if __name__ == "__main__":
     # Save the best agent (example)
     with open("best_agent.txt", "w") as f:
         f.write(str(hall_of_fame[0]))
-
+    # Vérification de la structure des individus DEAP
+    print("Type population[0] :", type(population[0]))
+    print("Contenu population[0] :", population[0])
+    print("Type hall_of_fame[0] :", type(hall_of_fame[0]) if len(hall_of_fame) > 0 else None)
+    print("Contenu hall_of_fame[0] :", hall_of_fame[0] if len(hall_of_fame) > 0 else None)
     # Tips:
     # - Adapt the evaluate_agent function to simulate a real game.
     # - Use the optimized parameters to configure your Catan agent.
