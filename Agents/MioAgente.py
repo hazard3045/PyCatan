@@ -460,8 +460,8 @@ class MioAgente(AgentInterface):
         is_anxious = (total_cards > 7) and (random.random() < w_anxiety)
 
         # --- STEP 2: Identify Goal using Genetics ---
-        w_city = self.params.get('weight_of_city', 0.5)
-        w_town = self.params.get('weight_town', 0.5)
+        w_city = self.params.get('city_weight', 0.5)
+        w_town = self.params.get('town_weight', 0.5)
 
         target_index = -1 
         target_is_city = False

@@ -45,48 +45,58 @@ if not hasattr(creator, 'FitnessMax'):
 if not hasattr(creator, 'Individual'):
     creator.create("Individual", list, fitness=creator.FitnessMax)
 
-# Dictionary of the different parameters to optimize with their respective ranges (0, 1)
+# Dictionary of the different parameters to optimize with their respective ranges
+# Keys MUST match exactly the self.params.get('key') calls in MioAgente.py
 dict_parameters = {
-    "sum_probability_weight": (0, 10),
-    "new_resources_weight": (0, 10),
-    "distance_weight": (0, 10),
-    "harbor_weight": (0, 10),
-    "street_weight": (0, 10),
-    "colony_weight": (0, 10),
-    "city_weight": (0, 10),
-    "lumber_a": (0, 10),
-    "brick_a": (0, 10),
-    "wool_a": (0, 10),
-    "grain_a": (0, 10),
-    "ore_a": (0, 10),
-    "lumber_b": (0, 10),
-    "brick_b": (0, 10),
-    "wool_b": (0, 10),
-    "grain_b": (0, 10),
-    "ore_b": (0, 10),
-    "ratio_resources_weight": (0, 10),
-    "need_for_resources_weight": (0, 10),
-    "position_player_weight": (0, 10),
-    "number_of_cards_weight": (0, 10),
-    "need_resources_stolen_weight": (0, 10),
-    "steal_from_player_weight": (0, 10),
-    "defense_weight": (0, 10),
-    "need_for_roads_weight": (0, 10)
+    # Resource weights — multiplied by probability dots (0-6) for up to 3 terrains per node
+    # Max raw contribution per resource: 6 * 10 = 60 per terrain
+    "weight_wood":                  (0, 10),
+    "weight_clay":                  (0, 10),
+    "weight_cereal":                (0, 10),
+    "weight_mineral":               (0, 10),
+    "weight_wool":                  (0, 10),
+    # Flat bonus added to node score when a harbor is present
+    # Should be on the same scale as resource scores (a good node ≈ 30-80) → 0-20
+    "start_harbor_bonus":           (0, 20),
+    # Road strategy: future node score is 30-80 → weight in (0, 1) to avoid overriding resource logic
+    "road_strategy_future_node":    (0, 1),
+    # Flat bonus for a road leading toward a harbor node — same scale as path scores (~10-50)
+    "weight_harbor":                (0, 20),
+    # Center control: connections (2-3) * w → keep small relative to other path scores
+    "road_strategy_center_control": (0, 5),
+    # Build strategy priorities — relative weights, same scale is fine
+    "city_weight":                  (0, 10),
+    "town_weight":                  (0, 10),
+    # Probability threshold for robber anxiety — MUST stay in [0, 1]
+    "weight_robber_anxiety":        (0, 1),
+    # Road building card scoring multipliers
+    # weight_material_diversity * 2.5 per new resource type found
+    "weight_material_diversity":    (0, 4),
+    # weight_block_opponent * 3.5 per opponent node
+    "weight_block_opponent":        (0, 4),
+    # weight_road_expansion * len(adjacent) ≈ * 3
+    "weight_road_expansion":        (0, 4),
 }
 IND_SIZE = len(dict_parameters)
 N_games_per_evaluation =  20 # Number of games to simulate for each evaluation
 
+def _get_last_vp(trace):
+    """Retourne le dict victory_points du dernier tour de la trace."""
+    last_round = max(trace['game'].keys(), key=lambda r: int(r.split('_')[-1]))
+    last_turn = max(trace['game'][last_round].keys(), key=lambda t: int(t.split('_')[-1].lstrip('P')))
+    return trace['game'][last_round][last_turn]['end_turn']['victory_points']
+
+
 def find_winner(trace):
     """Retourne l'identifiant du joueur gagnant ('J0', 'J1', ...) depuis une trace JSON."""
-    for round_key in sorted([k for k in trace['game'].keys() if k.startswith('round_')]):
-        round_data = trace['game'][round_key]
-        for turn_key in ['turn_P0', 'turn_P1', 'turn_P2', 'turn_P3']:
-            if turn_key in round_data and 'end_turn' in round_data[turn_key]:
-                vp = round_data[turn_key]['end_turn'].get('victory_points', {})
-                for player_id, points in vp.items():
-                    if int(points) >= 10:
-                        return player_id
-    return None
+    vp = _get_last_vp(trace)
+    return max(vp, key=lambda player: int(vp[player]))
+
+
+def get_final_vp(trace, player='J0'):
+    """Retourne les points de victoire finaux du joueur donné depuis une trace JSON."""
+    vp = _get_last_vp(trace)
+    return int(vp.get(player, 0))
 
 
 # Function to generate a random individual
@@ -110,6 +120,7 @@ def evaluate_agent(individual):
     import gc
     opponents_classes = [a1, a2, a3, a4, a5, a6, a7, a8]
     victories = 0
+    total_vp = 0
     n_games = N_games_per_evaluation
     params = dict(zip(dict_parameters.keys(), individual))
 
@@ -135,6 +146,7 @@ def evaluate_agent(individual):
             game_file = trace_path / f'game_{i}.json'
             with open(game_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
+            total_vp += get_final_vp(data, player='J0')
             if find_winner(data) == 'J0':
                 victories += 1
             del data
@@ -148,7 +160,9 @@ def evaluate_agent(individual):
        # del game_director, agent, players, opponents
     # gc.collect()
 
-    return (victories / N_games_per_evaluation,)
+    # Fitness = moyenne des VP normalisés sur 10 (moins bruité que le taux de victoire binaire)
+    # σ VP ≈ 2 → σ fitness ≈ 2/(10*√n) ≈ 0.037 pour n=30, contre 0.09 pour win/loss
+    return (total_vp / (n_games * 10),)
 
 # DEAP toolbox initialization
 toolbox = base.Toolbox()
@@ -157,14 +171,15 @@ toolbox.register("population", tools.initRepeat, list, toolbox.individual)
 toolbox.register("evaluate", evaluate_agent)
 toolbox.register("mate", tools.cxBlend, alpha=0.5)  # Croisement blend
 # Mutation: adds Gaussian noise to each gene
-toolbox.register("mutate", tools.mutGaussian, mu=0, sigma=1.0, indpb=0.2)
-toolbox.register("select", tools.selTournament, tournsize=3)
+toolbox.register("mutate", tools.mutGaussian, mu=0, sigma=0.5, indpb=0.2)
+toolbox.register("select", tools.selTournament, tournsize=2)
 
 # Genetic algorithm parameters
 POP_SIZE = 30   # Population size
-N_GEN = 30       # Number of generations
-CXPB = 0.3         # Crossover probability
-MUTPB = 0.4        # Mutation probability
+N_GEN = 50       # Number of generations
+CXPB = 0.6         # Crossover probability
+MUTPB = 0.2        # Mutation probability
+N_games_per_evaluation = 30  # Number of games to simulate for each evaluation
 
 
 if __name__ == "__main__":
@@ -213,6 +228,9 @@ if __name__ == "__main__":
         for ind, fit in zip(offspring, fits):
             ind.fitness.values = fit
         population = toolbox.select(offspring, k=len(population))
+        # Élitisme : réinjecte le meilleur individu de tous les temps dans la population
+        if len(hall_of_fame) > 0:
+            population[0] = toolbox.clone(hall_of_fame[0])
         hall_of_fame.update(population)
         record = stats.compile(population)
         end_time = time.time()
@@ -239,11 +257,7 @@ if __name__ == "__main__":
     # Save the best agent (example)
     with open("best_agent.txt", "w") as f:
         f.write(str(hall_of_fame[0]))
-    # Vérification de la structure des individus DEAP
-    print("Type population[0] :", type(population[0]))
-    print("Contenu population[0] :", population[0])
-    print("Type hall_of_fame[0] :", type(hall_of_fame[0]) if len(hall_of_fame) > 0 else None)
-    print("Contenu hall_of_fame[0] :", hall_of_fame[0] if len(hall_of_fame) > 0 else None)
+
     # Tips:
     # - Adapt the evaluate_agent function to simulate a real game.
     # - Use the optimized parameters to configure your Catan agent.

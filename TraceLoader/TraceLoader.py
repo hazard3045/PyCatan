@@ -1,5 +1,6 @@
 # from TraceLoader.Interpreter import Interpreter
 import json
+import os
 from pathlib import Path
 from datetime import datetime
 
@@ -14,9 +15,19 @@ class TraceLoader:
         # Creamos la carpeta del día y hora de hoy para guardar todas las trazas ahí
         # Si no existe la carpeta "Traces" la crea
         if store_trace:
-            today = datetime.today().strftime('%Y-%m-%d_%H-%M-%S-%f')
-            self.full_path = Path(__file__).parent / "Traces" / today
-            self.full_path.mkdir(parents=True)
+            base = Path(__file__).parent / "Traces"
+            # Retry loop: si deux workers obtiennent le même timestamp, ajoute un suffixe unique
+            suffix = 0
+            while True:
+                today = datetime.today().strftime('%Y-%m-%d_%H-%M-%S-%f')
+                name = today if suffix == 0 else f"{today}_{suffix}"
+                candidate = base / name
+                try:
+                    candidate.mkdir(parents=True)
+                    self.full_path = candidate
+                    break
+                except FileExistsError:
+                    suffix += 1
         return
 
     def export_to_file(self, game_number):
