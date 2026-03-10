@@ -28,17 +28,20 @@ class MioAgente(AgentInterface):
         # The math trick to get dots: 6 - absolute distance from 7
         return 6 - abs(7 - roll)
 
-    #Calculate the score of a node
+    # Calculate the score of a node considering Resource Diversity
     def evaluate_node(self, node_id):
         score = 0.0
         
-        # 1.Recupera i pesi genetici per ogni risorsa
+        # 1. Recupera i pesi genetici
         w_wood = self.params.get('weight_wood', 1.0)
         w_clay = self.params.get('weight_clay', 1.0)
         w_cereal = self.params.get('weight_cereal', 1.0)
         w_mineral = self.params.get('weight_mineral', 1.0)
         w_wool = self.params.get('weight_wool', 0.8)
         w_harbor = self.params.get('start_harbor_bonus', 1.5)
+        
+        # NEW: Genetic parameter for diversity (how much we value NEW resources)
+        w_diversity = self.params.get('weight_resource_diversity', 2.0)
         
         weights = {
             TerrainConstants.WOOD: w_wood,
@@ -49,31 +52,42 @@ class MioAgente(AgentInterface):
             TerrainConstants.DESERT: 0.0
         }
         
-        # 2. Evaluate surrounding terrain
+        # 2. Identify resources we ALREADY produce on the board
+        # This helps the agent "know" what it lacks
+        currently_produced_types = set()
+        for node in self.board.nodes:
+            if node['player'] == self.id:
+                for terrain_idx in node['contacting_terrain']:
+                    res_type = self.board.terrain[terrain_idx].get('terrain_type', -1)
+                    if res_type != -1:
+                        currently_produced_types.add(res_type)
+
+        # 3. Evaluate surrounding terrain of the candidate node
         contacting_terrains = self.board.nodes[node_id]['contacting_terrain']
         
         for terrain_id in contacting_terrains:
             terrain_info = self.board.terrain[terrain_id]
-            
-            # Get the dice roll probability and convert it to dots (1-6)
             roll = terrain_info['probability']
             dots = self.get_probability_dots(roll)
-            
-            # Get resource type
             res_type = terrain_info['terrain_type']
             
-            # Multiply probability by the genetic importance of the resource
+            # Base resource weight from DNA
             res_weight = weights.get(res_type, 0.0)
-            #Sum of Prob(t) + Weight(t) for each terrain t contacting the node
-            score += (dots * res_weight)
             
-        # 3. Evaluate Harbor Bonus
+            # DIVERSITY LOGIC:
+            # If we DON'T produce this resource yet, we apply the diversity bonus
+            diversity_bonus = 1.0
+            if res_type not in currently_produced_types and res_type != TerrainConstants.DESERT:
+                diversity_bonus += w_diversity
+            
+            # The score is (Probability * DNA Weight * Diversity Multiplier)
+            score += (dots * res_weight * diversity_bonus)
+            
+        # 4. Evaluate Harbor Bonus
         harbor_type = self.board.nodes[node_id]['harbor']
-        #If it's an harbour that gives a bonus for a resource we care about, add the harbor bonus
         if harbor_type != HarborConstants.NONE:
-            # Add a flat bonus if the node has a harbor
             score += w_harbor
-        #return the final score for the node
+            
         return score
 
     #select the best road to build based on the strategic evaluation of the adjacent nodes
@@ -303,12 +317,6 @@ class MioAgente(AgentInterface):
 
         return False
 
-    def on_turn_start(self):
-        # self.development_cards_hand.add_card(DevelopmentCard(99, 0, 0))
-        if len(self.development_cards_hand.hand) and random.randint(0, 1):
-            return self.development_cards_hand.select_card(0)
-        return None
-
     def on_having_more_than_7_materials_when_thief_is_called(self):
         # 1. Retrieve the complete DNA: Atomic resource weights
         # These are the specific genetic parameters for each material
@@ -435,11 +443,6 @@ class MioAgente(AgentInterface):
             return {'terrain': 0, 'player': -1}
 
         return {'terrain': best_terrain, 'player': target_player}
-
-    def on_turn_end(self):
-        if len(self.development_cards_hand.hand) and random.randint(0, 1):
-            return self.development_cards_hand.select_card(0)
-        return None
 
     def on_commerce_phase(self):
         # 1. Play Monopoly if we recently gifted >3 resources of the same type
@@ -808,3 +811,107 @@ class MioAgente(AgentInterface):
                 'node_id': r1['starting_node'], 'road_to': r1['finishing_node'],
                 'node_id_2': None, 'road_to_2': None
             }
+        
+    def on_turn_start(self):
+        """
+        Decides whether to play a Knight card before rolling the dice 
+        based on economic impact and the genetic army_weight.
+        """
+        # 1. Retrieve the genetic parameter from self.params
+        w_army = self.params.get('army_weight', 0.5)
+
+        # 2. Find all Knight cards in hand using the official constant
+        # Assuming DevelopmentCardConstants is already imported in your file
+        knight_cards = self.development_cards_hand.find_card_by_effect(DevelopmentCardConstants.KNIGHT_EFFECT)
+        
+        # If we have no Knights, we can't do anything at the start of the turn
+        if len(knight_cards) == 0:
+            return None
+
+        # 3. Use our Scoring Function to decide if playing the Knight is worth it
+        # This evaluates if we are blocked on a high-value hex
+        if self.check_if_important_hex_is_blocked(w_army):
+            # Play the first available Knight card
+            return knight_cards[0]
+
+        return None
+
+    def check_if_important_hex_is_blocked(self, w_army):
+        """
+        Evaluates the impact of the Robber on our production.
+        """
+        # 1. Find which terrain hex has the thief (thief/robber)
+        robber_hex_id = -1
+        for t in self.board.terrain:
+            if t['has_thief']:
+                robber_hex_id = t['id']
+                break
+                
+        if robber_hex_id == -1:
+            return False # Should not happen in a normal game
+
+        # 2. Get the hex data from the list
+        blocked_hex_data = self.board.terrain[robber_hex_id]
+        
+        # 3. Probability Map (Dots on the token)
+        prob_map = {2: 1, 12: 1, 3: 2, 11: 2, 4: 3, 10: 3, 5: 4, 9: 4, 6: 5, 8: 5}
+        hex_pips = prob_map.get(blocked_hex_data['probability'], 0)
+        
+        our_production_multiplier = 0
+        
+        # 4. Check our presence on the contacting nodes of this terrain
+        # Note: In your Board class, hexes are called 'terrain' and 
+        # the vertices are 'contacting_nodes'
+        for node_id in blocked_hex_data['contacting_nodes']:
+            node = self.board.nodes[node_id]
+            if node['player'] == self.id:
+                # Settlement = 1, City = 2
+                # In your class, node['has_city'] is a boolean
+                building_value = 2 if node['has_city'] else 1
+                our_production_multiplier += building_value
+
+        # 5. Scoring Logic
+        production_impact = hex_pips * our_production_multiplier
+        
+        # Genetic Threshold (same logic as before)
+        base_threshold = 6.5
+        effective_threshold = base_threshold - (w_army * 4.0)
+
+        return production_impact >= effective_threshold
+
+    def on_turn_end(self):
+        """
+        Decision logic for playing a development card at the end of the turn.
+        Points are calculated by scanning the board to prevent Hand AttributeError.
+        """
+        if not self.development_cards_hand.hand:
+            return None
+
+        # 1. Retrieve genetic parameters
+        w_urgency = self.params.get('weight_dev_card_urgency', 0.3)
+        w_victory_boost = self.params.get('weight_victory_near_threshold', 1.5)
+        
+        # 2. Manual Victory Point Calculation (Board Scan)
+        # Scan nodes to count settlements (1pt) and cities (2pts)
+        current_points = 0
+        for node in self.board.nodes:
+            if node['player'] == self.id:
+                # Based on GameManager logic: if has_city is true -> 2pts, else 1pt
+                current_points += 2 if node.get('has_city', False) else 1
+        
+        # 3. Dynamic Threshold: Increase urgency if close to winning (8+ points)
+        if current_points >= 8:
+            w_urgency *= w_victory_boost
+
+        # 4. Iterate and play card based on genetic urgency
+        for i, card in enumerate(self.development_cards_hand.hand):
+            # DevelopmentCardConstants.VICTORY_POINT_EFFECT must be ignored
+            if card.effect == DevelopmentCardConstants.VICTORY_POINT_EFFECT:
+                continue
+                
+            # Genetic trigger: if random roll is below weight, play the card
+            if random.random() < w_urgency:
+                # English comment: Genetic decision triggered to play card
+                return self.development_cards_hand.select_card(i)
+
+        return None

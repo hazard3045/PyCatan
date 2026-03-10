@@ -202,6 +202,71 @@ The agent performs a "Genetic Triage" before discarding:
 
 The removal loop is designed to strip away surplus first (e.g., discarding a 3rd Cereal only after all Wool is gone). If the agent is forced to discard essential materials, it does so by following the reverse order of building importance, preserving the rarest required materials until the very last iteration of the loop.
 
+# 🕵️ Aggressive Robber Placement (on_moving_thief)
+
+The agent's strategy for moving the Robber has evolved from a random assignment to a Genetic Threat Analysis.
+## 1. Resource Sabotage
+
+It prioritizes placing the Robber on hexes that produce these high-value resources for opponents, effectively creating a resource scarcity for competitors.
+
+## 2. Probability & Impact
+
+Each terrain is assigned a Threat Score based on:
+
+    Dice Frequency: Hexes with high-probability numbers (6, 8, 5, 9) are prioritized.
+
+    Occupancy: The agent targets hexes where multiple opponents have settled, maximizing the disruptive impact of the Robber.
+
+    Self-Preservation: A mandatory filter prevents the agent from ever placing the Robber on a hex where it has its own settlements or cities.
+
+## 3. Target Selection
+
+If multiple opponents are adjacent to the chosen hex, the agent selects the primary target based on the game state, ensuring that the most advanced player is hindered.
+
+# 💎 Aggressive Monopoly Scoring (on_monopoly_card_use)
+
+The agent now employs a multi-factor scoring function to maximize the impact of the Monopoly development card, shifting from simple utility to Strategic Economic Sabotage.
+## 1. Triangulation Logic
+
+The scoring function evaluates each resource by combining three distinct vectors:
+
+    The Deficiency Vector: Calculates the gap between the current Hand and the materials required for the next building goal (weight_of_city or weight_town).
+
+    The Genetic Vector: Integrates the atomic weights of resources (e.g., weight_mineral) to align the choice with the agent's long-term DNA strategy.
+
+    The Sabotage Vector: Analyzes the board's topology to identify which resources opponents are most likely to possess in abundance, based on their settlement positions and hex probabilities.
+
+Certamente. Ecco la sezione del report in formato Markdown dedicata al metodo `on_road_building_card_use`. Ho messo in risalto i parametri genetici e la logica di scoring per spiegare come l'agente trasforma una carta sviluppo in un vantaggio territoriale e tattico.
+
+---
+
+# 🏗️ Strategic Infrastructure Expansion (`on_road_building_card_use`)
+
+The scoring function for this method is driven by three key genetic weights:
+
+1. **`weight_road_expansion`**:
+* **Role**: Focuses on the continuity of the road network.
+* **Impact**: Higher values prioritize connecting the two new roads into a single segment or attaching them to the existing longest path. This is the primary driver for securing the **Longest Road** trophy (+2 Victory Points).
+
+2. **`weight_material_diversity`**:
+* **Role**: Promotes economic self-sufficiency.
+* **Impact**: Grants a scoring bonus if a road leads to a node adjacent to a resource type that the agent does **not** yet produce. This ensures the agent expands toward variety rather than redundancy.
+
+3. **`weight_block_opponent`**:
+* **Role**: Governs aggressive territorial denial.
+* **Impact**: Analyzes if the potential placement occupies a "bottleneck" or a high-value node that an opponent could have built upon. If this weight is high, the agent will prioritize "murando" (walling off) competitors over its own optimal growth.
+
+
+
+### 🔍 The Scoring Algorithm
+
+For every possible pair of roads $(r_1, r_2)$, the agent calculates a total score based on the following logic:
+
+* **Concatenation Bonus**: If the two roads are continuous, a significant multiplier based on `weight_road_expansion` is applied.
+* **Discovery Bonus**: Each unique resource adjacent to the new nodes that is missing from the agent's current production adds a value scaled by `weight_material_diversity`.
+* **Sabotage Multiplier**: The agent identifies if the target nodes are currently reachable by opponents. Occupying these nodes triggers a defensive bonus scaled by `weight_block_opponent`.
+
+
 
 # All parameters
 new_resources_weight 
