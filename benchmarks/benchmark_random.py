@@ -11,31 +11,29 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from Agents.RandomAgent import RandomAgent as ra
 from Managers.GameDirector import GameDirector
 
+# Clés des paramètres dans l'ordre du chromosome (doit correspondre à dict_parameters dans train_genetic_agent.py)
+PARAM_KEYS = [
+    "weight_wood", "weight_clay", "weight_cereal", "weight_mineral", "weight_wool",
+    "start_harbor_bonus", "road_strategy_future_node", "weight_harbor",
+    "road_strategy_center_control", "city_weight", "town_weight",
+    "weight_robber_anxiety", "weight_material_diversity", "weight_block_opponent",
+    "weight_road_expansion", "weight_dev_card_urgency", "weight_victory_near_threshold",
+    "army_weight",
+]
+
+def array_to_params(arr):
+    """Convertit un tableau de valeurs (copié depuis best_agent.txt) en dict de paramètres."""
+    return {"params": dict(zip(PARAM_KEYS, arr))}
+
 n_matches = 100
-porcentaje_workers = 0.95
+porcentaje_workers = 0.50
+
+
 
 # Agentes a evaluar: (ruta_clase, params)
 agentes_a_evaluar = [
-    ("Agents.MioAgente.MioAgente", {"params": {
-        "weight_wood":                   10,
-        "weight_clay":                   2.7523358193487795,
-        "weight_cereal":                 9.001056374167728,
-        "weight_mineral":                4.555760984087358,
-        "weight_wool":                   2.505385346437727,
-        "start_harbor_bonus":            10.272131069508784,
-        "road_strategy_future_node":     0.2418327149450847,
-        "weight_harbor":                 18.597927278163084,
-        "road_strategy_center_control":  1.4183695315037737,
-        "city_weight":                   6.860856483768782,
-        "town_weight":                   4.847299734273452,
-        "weight_robber_anxiety":         0.6119191184907402,
-        "weight_material_diversity":     2.359217820800296,
-        "weight_block_opponent":         1.01798542682469,
-        "weight_road_expansion":         3.06012354520387,
-        "weight_dev_card_urgency":       3.5432628757403064,
-        "weight_victory_near_threshold": 9.41093592022029,
-    }}),
-    # Se pueden poner varios agentes para evaluar y comparar, con y sin parámetros personalizados, por si queremos probar varias configuraciones del mismo agente.
+    ("Agents.MioAgente.MioAgente", array_to_params([7.703839134064908, 6.424968154615819, 7.466498897386597, 4.912721323694862, 3.8918101170251607, 10.440478064810522, 2.7739084142681323, 13.658516262162852, 2.430466549617906, 0.29139802177269036, 0.45869379325461307, 0.33451014086771863, 3.507244506475433, 1.1837140074484345, 1.2733602087714417, 0.41331148294137277, 4.502435318796219, 0.6487115395030232]
+                                                   )),
 ]
 
 def cargar_agente(ruta_clase):

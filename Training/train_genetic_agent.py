@@ -86,15 +86,16 @@ IND_SIZE = len(dict_parameters)
 # Genetic algorithm parameters
 N_games_per_evaluation = 50  # Number of games to simulate for each evaluation
 POP_SIZE = 60   # Population size
-N_GEN = 50       # Number of generations
+N_GEN = 30       # Number of generations
 CXPB = 0.7         # Crossover probability
 MUTPB = 0.3        # Mutation probability
 RATE = 0.1         # Mutation strength 
 WEIGHT_VP = 1.0      # Weight for victory points in fitness
 WEIGHT_WIN = 5.0     # Additional weight for winning (adjust as needed)
+porcentaje_workers = 0.85
+
 
 # Game configurations: rotating positions + diverse opponent combos.
-
 import itertools as _itertools
 _ALL_OPP_COMBOS = list(_itertools.combinations(range(8), 3))  # 56 combos C(8,3)
 FIXED_GAME_CONFIGS = [
@@ -219,7 +220,6 @@ toolbox.register("select", tools.selTournament, tournsize=3)
 if __name__ == "__main__":
 
     # Parallélise les évaluations sur les cœurs disponibles (50% pour ne pas saturer la RAM)
-    porcentaje_workers = 0.85
     workers = max(1, int((os.cpu_count() or 1) * porcentaje_workers))
     pool = multiprocessing.Pool(processes=workers, maxtasksperchild=2)
     toolbox.register("map", pool.map)
@@ -243,12 +243,12 @@ if __name__ == "__main__":
     hall_of_fame = tools.HallOfFame(1)
 
     import time
+    gen_times = []
     try:
         import psutil
         psutil_available = True
     except ImportError:
         psutil_available = False
-        print("psutil non installé : la mémoire et les processus ne seront pas affichés.")
 
     for gen in range(N_GEN):
         start_time = time.time()
@@ -292,17 +292,21 @@ if __name__ == "__main__":
         end_time = time.time()
         elapsed = end_time - start_time
         speed = elapsed / len(offspring) if len(offspring) > 0 else 0
-        
-        mem_str = ""
-        proc_str = ""
-        if psutil_available:
-            process = psutil.Process(os.getpid())
-            mem_mb = process.memory_info().rss / 1024 / 1024
-            mem_str = f" | RAM: {mem_mb:.2f} MB"
-            python_procs = [p for p in psutil.process_iter(['name']) if p.info['name'] and 'python' in p.info['name'].lower()]
-            proc_str = f" | Python procs: {len(python_procs)}"
-            
-        print(f"Génération {gen+1}: avg={record['avg']:.2f}, max={record['max']}, min={record['min']} | Temps: {elapsed:.2f}s | Vitesse: {speed:.2f}s/individu{mem_str}{proc_str}")
+        gen_times.append(elapsed)
+
+        gens_remaining = N_GEN - (gen + 1)
+        avg_gen_time = sum(gen_times) / len(gen_times)
+        eta_seconds = avg_gen_time * gens_remaining
+        eta_h = int(eta_seconds // 3600)
+        eta_m = int((eta_seconds % 3600) // 60)
+        eta_s = int(eta_seconds % 60)
+        eta_str = f"{eta_h:02d}:{eta_m:02d}:{eta_s:02d}"
+
+            # Save the best agent (example)
+        with open("current_best_agent.txt", "w") as f:
+            f.write(str(hall_of_fame[0]))
+
+        print(f"Génération {gen+1}/{N_GEN}: avg={record['avg']:.2f}, max={record['max']}, min={record['min']} | {elapsed:.1f}s ({speed:.2f}s/ind) | ETA: {eta_str}")
     # Display the results
     print("\nBest individual found:", hall_of_fame[0])
     print("Fitness:", hall_of_fame[0].fitness.values[0])

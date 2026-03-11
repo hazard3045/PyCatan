@@ -21,6 +21,20 @@ from Agents.SigmaAgent import SigmaAgent as sa
 from Agents.TristanAgent import TristanAgent as ta
 from Managers.GameDirector import GameDirector
 
+# Clés des paramètres dans l'ordre du chromosome (doit correspondre à dict_parameters dans train_genetic_agent.py)
+PARAM_KEYS = [
+    "weight_wood", "weight_clay", "weight_cereal", "weight_mineral", "weight_wool",
+    "start_harbor_bonus", "road_strategy_future_node", "weight_harbor",
+    "road_strategy_center_control", "city_weight", "town_weight",
+    "weight_robber_anxiety", "weight_material_diversity", "weight_block_opponent",
+    "weight_road_expansion", "weight_dev_card_urgency", "weight_victory_near_threshold",
+    "army_weight",
+]
+
+def array_to_params(arr):
+    """Convertit un tableau de valeurs (copié depuis best_agent.txt) en dict de paramètres."""
+    return {"params": dict(zip(PARAM_KEYS, arr))}
+
 
 BENCHMARK_AGENTS = [ra, aha, apa, apja, cza, ca, ea, paaa, sa, ta]
 
@@ -29,24 +43,7 @@ porcentaje_workers = 0.95
 
 # Agentes a evaluar: (ruta_clase, params)
 agentes_a_evaluar = [
-    ("Agents.MioAgente.MioAgente",  {"params": {
-        "weight_wood":                  8.264799945211934,
-        "weight_clay":                  6.926251501263336,
-        "weight_cereal":                2.008590082291405,
-        "weight_mineral":               8.445436679734307,
-        "weight_wool":                  0.0215019639492007,
-        "start_harbor_bonus":           17.282898013634473,
-        "road_strategy_future_node":    0.43302526645311407,
-        "weight_harbor":                9.9949593972492,
-        "road_strategy_center_control": 2.021243655562975,
-        "city_weight":                  6.039291416480829,
-        "town_weight":                  1.6738912618188926,
-        "weight_robber_anxiety":        0.43927076728099596,
-        "weight_material_diversity":    1.4127263111171673,
-        "weight_block_opponent":        0.5348109513345221,
-        "weight_road_expansion":        0.5544544930347917,
-    }}), # Por ejemplo, si quieres evaluar el agente AdrianHerasAgent, que está en Agents.AdrianHerasAgent sin parámetros adicionales
-    # Se pueden poner varios agentes para evaluar y comparar, con y sin parámetros personalizados, por si queremos probar varias configuraciones del mismo agente.
+    ("Agents.MioAgente.MioAgente", array_to_params([7.419251727989452, 10, 6.989267153415008, 4.215150682739909, 9.570901904295951, 14.122292787857651, 1.781264898230042, 0, 4.1710099163598455, 0.8869740767670697, 0.06618299050578462, 0.10595657258319512, 3.366945855844895, 2.2221149242299227, 3.403665154120857, 0.16950295640174642, 4.761025689044656, 0.379295716000546])),
 ]
 
 def cargar_agente(ruta_clase):
