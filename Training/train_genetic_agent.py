@@ -28,14 +28,14 @@ import sys
 
 # Import for simulation and game management
 from Managers.GameDirector import GameDirector
-from Opponents.AlexPelochoJaimeAgent import AlexPelochoJaimeAgent as a1
-from Opponents.CarlesZaidaAgent import CarlesZaidaAgent as a2
-from Opponents.CrabisaAgent import CrabisaAgent as a3
-from Opponents.EdoAgent import EdoAgent as a4
-from Opponents.PabloAleixAlexAgent import PabloAleixAlexAgent as a5
-from Opponents.RandomAgent import RandomAgent as a6
-from Opponents.SigmaAgent import SigmaAgent as a7
-from Opponents.TristanAgent import TristanAgent as a8
+from Agents.AlexPelochoJaimeAgent import AlexPelochoJaimeAgent as a1
+from Agents.CarlesZaidaAgent import CarlesZaidaAgent as a2
+from Agents.CrabisaAgent import CrabisaAgent as a3
+from Agents.EdoAgent import EdoAgent as a4
+from Agents.PabloAleixAlexAgent import PabloAleixAlexAgent as a5
+from Agents.RandomAgent import RandomAgent as a6
+from Agents.SigmaAgent import SigmaAgent as a7
+from Agents.TristanAgent import TristanAgent as a8
  
 
 # Define the problem: maximize the agent's performance
@@ -59,14 +59,15 @@ dict_parameters = {
     # Should be on the same scale as resource scores (a good node ≈ 30-80) → 0-20
     "start_harbor_bonus":           (0, 20),
     # Road strategy: future node score is 30-80 → weight in (0, 1) to avoid overriding resource logic
-    "road_strategy_future_node":    (0, 1),
+    "road_strategy_future_node":    (0, 3),
     # Flat bonus for a road leading toward a harbor node — same scale as path scores (~10-50)
     "weight_harbor":                (0, 20),
     # Center control: connections (2-3) * w → keep small relative to other path scores
     "road_strategy_center_control": (0, 5),
-    # Build strategy priorities — relative weights, same scale is fine
-    "city_weight":                  (0, 10),
-    "town_weight":                  (0, 10),
+    # Build strategy priorities — used both as multipliers AND probability thresholds
+    # (random.random() < w_city), so MUST stay in [0, 1]
+    "city_weight":                  (0, 1),
+    "town_weight":                  (0, 1),
     # Probability threshold for robber anxiety — MUST stay in [0, 1]
     "weight_robber_anxiety":        (0, 1),
     # Road building card scoring multipliers
@@ -76,9 +77,30 @@ dict_parameters = {
     "weight_block_opponent":        (0, 4),
     # weight_road_expansion * len(adjacent) ≈ * 3
     "weight_road_expansion":        (0, 4),
+    "weight_dev_card_urgency":       (0, 1),
+    "weight_victory_near_threshold": (0, 10),
+    "army_weight":                   (0, 1),
 }
 IND_SIZE = len(dict_parameters)
-N_games_per_evaluation =  20 # Number of games to simulate for each evaluation
+
+# Genetic algorithm parameters
+N_games_per_evaluation = 50  # Number of games to simulate for each evaluation
+POP_SIZE = 60   # Population size
+N_GEN = 50       # Number of generations
+CXPB = 0.7         # Crossover probability
+MUTPB = 0.3        # Mutation probability
+RATE = 0.1         # Mutation strength 
+WEIGHT_VP = 1.0      # Weight for victory points in fitness
+WEIGHT_WIN = 5.0     # Additional weight for winning (adjust as needed)
+
+# Game configurations: rotating positions + diverse opponent combos.
+
+import itertools as _itertools
+_ALL_OPP_COMBOS = list(_itertools.combinations(range(8), 3))  # 56 combos C(8,3)
+FIXED_GAME_CONFIGS = [
+    (i % 4, _ALL_OPP_COMBOS[i % len(_ALL_OPP_COMBOS)])
+    for i in range(N_games_per_evaluation)
+]
 
 def _get_last_vp(trace):
     """Retourne le dict victory_points du dernier tour de la trace."""
@@ -86,6 +108,13 @@ def _get_last_vp(trace):
     last_turn = max(trace['game'][last_round].keys(), key=lambda t: int(t.split('_')[-1].lstrip('P')))
     return trace['game'][last_round][last_turn]['end_turn']['victory_points']
 
+
+def make_mioagente_class(params):
+    """Returns a MioAgente subclass with params baked in, usable as a plain class by AgentManager."""
+    class _ParametrizedMioAgente(MioAgente):
+        def __init__(self, agent_id):
+            super().__init__(agent_id, params=params)
+    return _ParametrizedMioAgente
 
 def find_winner(trace):
     """Retourne l'identifiant du joueur gagnant ('J0', 'J1', ...) depuis une trace JSON."""
@@ -98,6 +127,16 @@ def get_final_vp(trace, player='J0'):
     vp = _get_last_vp(trace)
     return int(vp.get(player, 0))
 
+def mutate_scaled(individual, indpb, rate = 0.1):
+    """Mute chaque gène avec une force proportionnelle à sa plage de valeurs."""
+    for i, (min_val, max_val) in enumerate(dict_parameters.values()):
+        if random.random() < indpb:
+            # Force de mutation : 10% de l'amplitude totale du paramètre
+            sigma = (max_val - min_val) * rate
+            individual[i] += random.gauss(0, sigma)
+            # On s'assure de rester strictement dans les bornes définies
+            individual[i] = max(min(individual[i], max_val), min_val)
+    return individual,
 
 # Function to generate a random individual
 def generate_individual():
@@ -109,93 +148,88 @@ def generate_individual():
     return [random.uniform(min_val, max_val) for min_val, max_val in dict_parameters.values()]
 
 # Agent evaluation function
-def evaluate_agent(individual):
+def evaluate_agent(args):
     """
-    Evaluates the agent's performance.
-    Replace this function with a real game simulation or scoring.
-    Here, a dummy function is used for the example.
+    Evaluates the agent over FIXED_GAME_CONFIGS (rotating positions, diverse opponents).
+    Games are genuinely random (no fixed seed) so the board layout, dice rolls, and
+    card draws vary — this ensures the agent's params actually influence outcomes.
+    With 20 games the average VP is a reliable signal of true performance.
     """
+    individual, gen = args
     import json
     import shutil
-    import gc
     opponents_classes = [a1, a2, a3, a4, a5, a6, a7, a8]
-    victories = 0
-    total_vp = 0
-    n_games = N_games_per_evaluation
     params = dict(zip(dict_parameters.keys(), individual))
+    total_vp = 0
+    victories = 0  # Nouveau compteur de victoires  
 
-    # Seed de base propre à cet individu pour diversifier les parties entre individus
-    base_seed = hash(tuple(round(x, 6) for x in individual)) & 0xFFFFFF
-    import time
-    for i in range(n_games):
-        random.seed(base_seed + i)
-        # Crée un agent neuf à chaque partie pour éviter l'accumulation d'état
-        agent = MioAgente(agent_id=0, params=params)
-        chosen_opponents = random.sample(opponents_classes, 3)
-        opponents = [cls(j+1) for j, cls in enumerate(chosen_opponents)]
-        players = [agent] + opponents
+    for i, (position, opp_indices) in enumerate(FIXED_GAME_CONFIGS):
+        random.seed((gen * 1000) + i)
 
-        game_director = GameDirector(players, max_rounds=200)
-        # Chemin exact du répertoire de traces propre à ce GameDirector
-        # (safe en parallèle : chaque instance crée son propre dossier horodaté)
+        opp_ids = [j for j in range(4) if j != position]
+        MioAgenteClass = make_mioagente_class(params)
+
+        agents_classes = [None] * 4
+        agents_classes[position] = MioAgenteClass
+        for k, opp_idx in enumerate(opp_indices):
+            agents_classes[opp_ids[k]] = opponents_classes[opp_idx]
+
+        game_director = GameDirector(agents=agents_classes, max_rounds=200)
         trace_path = game_director.trace_loader.full_path
         game_director.game_start(i, print_outcome=False)
 
-        # Lecture du fichier JSON via le chemin connu — aucun scan de dossier
+        agent_id = f"J{position}"
         try:
             game_file = trace_path / f'game_{i}.json'
             with open(game_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            total_vp += get_final_vp(data, player='J0')
-            if find_winner(data) == 'J0':
+
+            total_vp += get_final_vp(data, player=agent_id)
+
+            if find_winner(data) == agent_id:
                 victories += 1
+
             del data
         except Exception as e:
             print(f"Error reading game trace: {e}", file=sys.stderr)
 
-        # Supprime le répertoire de traces immédiatement après lecture
         shutil.rmtree(trace_path, ignore_errors=True)
 
-        # Libère explicitement les objets pour éviter les fuites mémoire
-       # del game_director, agent, players, opponents
-    # gc.collect()
+    avg_vp = total_vp / N_games_per_evaluation
+    win_rate = victories / N_games_per_evaluation
 
-    # Fitness = moyenne des VP normalisés sur 10 (moins bruité que le taux de victoire binaire)
-    # σ VP ≈ 2 → σ fitness ≈ 2/(10*√n) ≈ 0.037 pour n=30, contre 0.09 pour win/loss
-    return (total_vp / (n_games * 10),)
+    fitness_score = avg_vp * WEIGHT_VP + win_rate *10* WEIGHT_WIN  # Combine VP and win rate into a single fitness score
+    return (fitness_score,)
+
+
 
 # DEAP toolbox initialization
 toolbox = base.Toolbox()
 toolbox.register("individual", tools.initIterate, creator.Individual, generate_individual)
 toolbox.register("population", tools.initRepeat, list, toolbox.individual)
 toolbox.register("evaluate", evaluate_agent)
-toolbox.register("mate", tools.cxBlend, alpha=0.5)  # Croisement blend
+toolbox.register("mate", tools.cxBlend, alpha=0.3)  # Croisement blend
 # Mutation: adds Gaussian noise to each gene
-toolbox.register("mutate", tools.mutGaussian, mu=0, sigma=0.5, indpb=0.2)
-toolbox.register("select", tools.selTournament, tournsize=2)
+toolbox.register("mutate", mutate_scaled, indpb=0.2 , rate = RATE)
+toolbox.register("select", tools.selTournament, tournsize=3)
 
-# Genetic algorithm parameters
-POP_SIZE = 30   # Population size
-N_GEN = 50       # Number of generations
-CXPB = 0.6         # Crossover probability
-MUTPB = 0.2        # Mutation probability
-N_games_per_evaluation = 30  # Number of games to simulate for each evaluation
+
 
 
 if __name__ == "__main__":
 
     # Parallélise les évaluations sur les cœurs disponibles (50% pour ne pas saturer la RAM)
-    porcentaje_workers = 0.8
+    porcentaje_workers = 0.85
     workers = max(1, int((os.cpu_count() or 1) * porcentaje_workers))
-    pool = multiprocessing.Pool(processes=workers, maxtasksperchild=5)
+    pool = multiprocessing.Pool(processes=workers, maxtasksperchild=2)
     toolbox.register("map", pool.map)
     
 
     # Create the initial population
     population = toolbox.population(n=POP_SIZE)
 
-    # Evaluate the initial population before the first generation
-    fits = toolbox.map(toolbox.evaluate, population)
+    # Evaluate the initial population before the first generation (generation -1)
+    fits = pool.map(evaluate_agent, [(ind, -1) for ind in population])
     for ind, fit in zip(population, fits):
         ind.fitness.values = fit
 
@@ -216,37 +250,59 @@ if __name__ == "__main__":
         psutil_available = False
         print("psutil non installé : la mémoire et les processus ne seront pas affichés.")
 
-    # Manual loop for GA to print stats each generation
     for gen in range(N_GEN):
         start_time = time.time()
-        offspring = algorithms.varAnd(population, toolbox, cxpb=CXPB, mutpb=MUTPB)
-        # Clamp each parameter to its bounds after mutation
+        
+        # --- 1. ÉLITISME SÉCURISÉ ---
+        # On sauvegarde les 2 meilleurs individus de la génération actuelle
+        elites = tools.selBest(population, 2)
+        clones_elites = list(map(toolbox.clone, elites))
+        
+        # --- 2. SÉLECTION ---
+        # On sélectionne les parents pour le reste de la population
+        parents = toolbox.select(population, len(population) - 2)
+        offspring = list(map(toolbox.clone, parents))
+        
+        # --- 3. CROISEMENT ET MUTATION ---
+        offspring = algorithms.varAnd(offspring, toolbox, cxpb=CXPB, mutpb=MUTPB)
+        
+        # --- NOUVEAU : RÉPARATION DE L'ADN (Clamping) ---
+        # On s'assure que le croisement cxBlend n'a pas créé de valeurs aberrantes
         for ind in offspring:
             for i, (min_val, max_val) in enumerate(dict_parameters.values()):
                 ind[i] = max(min(ind[i], max_val), min_val)
-        fits = toolbox.map(toolbox.evaluate, offspring)
+                
+        # --- 4. RECOMBINAISON ---
+        # On réintègre nos élites pures avec les enfants mutés/croisés
+        offspring.extend(clones_elites)
+        
+        # --- 5. ÉVALUATION ---
+        # Tout le monde rejoue (même les élites, pour prouver que ce n'était pas de la chance)
+        fits = pool.map(evaluate_agent, [(ind, gen) for ind in offspring])
         for ind, fit in zip(offspring, fits):
             ind.fitness.values = fit
-        population = toolbox.select(offspring, k=len(population))
-        # Élitisme : réinjecte le meilleur individu de tous les temps dans la population
-        if len(hall_of_fame) > 0:
-            population[0] = toolbox.clone(hall_of_fame[0])
+            
+        # 6. REMPLACEMENT
+        population[:] = offspring
+        
+        # Mise à jour des statistiques
         hall_of_fame.update(population)
         record = stats.compile(population)
+        
         end_time = time.time()
         elapsed = end_time - start_time
         speed = elapsed / len(offspring) if len(offspring) > 0 else 0
+        
         mem_str = ""
         proc_str = ""
         if psutil_available:
             process = psutil.Process(os.getpid())
             mem_mb = process.memory_info().rss / 1024 / 1024
             mem_str = f" | RAM: {mem_mb:.2f} MB"
-            # Compte les processus Python actifs
             python_procs = [p for p in psutil.process_iter(['name']) if p.info['name'] and 'python' in p.info['name'].lower()]
             proc_str = f" | Python procs: {len(python_procs)}"
+            
         print(f"Génération {gen+1}: avg={record['avg']:.2f}, max={record['max']}, min={record['min']} | Temps: {elapsed:.2f}s | Vitesse: {speed:.2f}s/individu{mem_str}{proc_str}")
-
     # Display the results
     print("\nBest individual found:", hall_of_fame[0])
     print("Fitness:", hall_of_fame[0].fitness.values[0])

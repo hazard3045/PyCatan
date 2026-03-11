@@ -632,7 +632,9 @@ class MioAgente(AgentInterface):
 
         return None
 
+
     def on_game_start(self, board_instance):
+
         self.board = board_instance
 
         # 1. Get all legal starting nodes
