@@ -60,7 +60,7 @@ CXPB = 0.7         # Crossover probability
 MUTPB = 0.3        # Mutation probability
 RATE = 0.1         # Mutation strength 
 WEIGHT_VP = 1.0      # Weight for victory points in fitness
-WEIGHT_WIN = 5.0     # Additional weight for winning (adjust as needed)
+WEIGHT_WIN = 5.0     # Additional weight for winning 
 porcentaje_workers = 0.85
 
 
@@ -123,7 +123,7 @@ def evaluate_agent(args):
     Evaluates the agent over FIXED_GAME_CONFIGS (rotating positions, diverse opponents).
     Games are genuinely random (no fixed seed) so the board layout, dice rolls, and
     card draws vary — this ensures the agent's params actually influence outcomes.
-    With 20 games the average VP is a reliable signal of true performance.
+    With 50 games the average VP is a reliable signal of true performance.
     """
     individual, gen = args
     import json
